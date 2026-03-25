@@ -84,7 +84,9 @@ async def _send_daily_summary(bot: Bot, user_id: int) -> None:
     if not active:
         return
 
-    blocks = ["📊 Сводка по проектам:"]
+    import datetime as _dt
+    today = _dt.date.today().strftime("%d.%m.%y")
+    blocks = [f"📅 Обзор на {today}"]
     for s in active:
         snap = await db.get_latest_snapshot(s["id"])
         if snap:

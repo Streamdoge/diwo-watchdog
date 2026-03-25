@@ -158,9 +158,9 @@ def format_source_summary(name: str, total: int, online: int) -> str:
     offline_pct = round(offline / total * 100) if total else 0
     return (
         f'"{name}":\n'
-        f"Радаров {total}:\n"
-        f"Online {online} / {online_pct}%\n"
-        f"Offline {offline} / {offline_pct}%"
+        f"Всего радаров {total}:\n"
+        f"🟢 Online {online} / {online_pct}%\n"
+        f"🔴 Offline {offline} / {offline_pct}%"
     )
 
 

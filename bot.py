@@ -152,6 +152,18 @@ class SetSummaryTime(StatesGroup):
 # Helpers
 # ---------------------------------------------------------------------------
 
+def format_source_summary(name: str, total: int, online: int) -> str:
+    offline = total - online
+    online_pct = round(online / total * 100) if total else 0
+    offline_pct = round(offline / total * 100) if total else 0
+    return (
+        f'"{name}":\n'
+        f"Радаров {total}:\n"
+        f"Online {online} / {online_pct}%\n"
+        f"Offline {offline} / {offline_pct}%"
+    )
+
+
 def _parse_time(text: str) -> str | None:
     parts = text.strip().split(":")
     if (
@@ -470,8 +482,7 @@ async def cb_src_now(cb: CallbackQuery) -> None:
         total, online = await poller.test_fetch_source(source_id)
         offline = total - online
         await cb.message.answer(  # type: ignore[union-attr]
-            f"📊 Сводка сейчас\n"
-            f'Объект "{src["name"]}": Радаров всего {total}, online {online}, offline {offline}'
+            "📊 Сводка по проектам:\n\n" + format_source_summary(src["name"], total, online)
         )
     except Exception as exc:
         await cb.message.answer(f"⚠️ Ошибка: {_clean_error(exc)}")  # type: ignore[union-attr]
@@ -573,15 +584,14 @@ async def cb_settings_ds_now(cb: CallbackQuery) -> None:
     if not active:
         await cb.message.answer("Нет активных источников.")  # type: ignore[union-attr]
         return
-    lines = ["📊 Сводка сейчас"]
+    blocks = ["📊 Сводка по проектам:"]
     for src in active:
         try:
             total, online = await poller.test_fetch_source(src["id"])
-            offline = total - online
-            lines.append(f'Объект "{src["name"]}": Радаров всего {total}, online {online}, offline {offline}')
+            blocks.append(format_source_summary(src["name"], total, online))
         except Exception as exc:
-            lines.append(f'Объект "{src["name"]}": ⚠️ {_clean_error(exc)}')
-    await cb.message.answer("\n".join(lines))  # type: ignore[union-attr]
+            blocks.append(f'"{src["name"]}":\n⚠️ {_clean_error(exc)}')
+    await cb.message.answer("\n\n".join(blocks))  # type: ignore[union-attr]
 
 
 @router.message(SetSummaryTime.input)

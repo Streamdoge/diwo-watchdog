@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 import db
 import poller
 import widgets as wg
-from bot import create_dispatcher, alert_snooze_keyboard
+from bot import create_dispatcher, alert_snooze_keyboard, format_source_summary
 
 USER_LEVEL_SOURCE = wg.USER_LEVEL_SOURCE
 
@@ -84,20 +84,16 @@ async def _send_daily_summary(bot: Bot, user_id: int) -> None:
     if not active:
         return
 
-    lines = ["📊 Утренняя сводка"]
+    blocks = ["📊 Сводка по проектам:"]
     for s in active:
         snap = await db.get_latest_snapshot(s["id"])
         if snap:
-            offline = snap["total"] - snap["online"]
-            lines.append(
-                f'Объект "{s["name"]}": Радаров всего {snap["total"]}, '
-                f'online {snap["online"]}, offline {offline}'
-            )
+            blocks.append(format_source_summary(s["name"], snap["total"], snap["online"]))
         else:
-            lines.append(f'Объект "{s["name"]}": нет данных')
+            blocks.append(f'"{s["name"]}":\nнет данных')
 
     try:
-        await bot.send_message(user_id, "\n".join(lines))
+        await bot.send_message(user_id, "\n\n".join(blocks))
     except Exception as exc:
         logger.error("Не удалось отправить сводку user=%s: %s", user_id, exc)
 

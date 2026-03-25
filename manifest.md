@@ -1,4 +1,4 @@
-# Diwo Tg Watchdog — Project Manifest
+# Diwo Watchdog — Project Manifest
 
 ---
 
@@ -11,7 +11,7 @@
 
 ## Что это
 
-Telegram-бот мониторинга оборудования DIWO
+Diwo Watchdog — Telegram-бот мониторинга оборудования DIWO
 
 ## Цель 
 

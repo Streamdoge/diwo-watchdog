@@ -111,13 +111,12 @@ async def add_source(
     auth_base_url: str,
     login: str,
     password_enc: str,
-    poll_interval: int,
 ) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
-            """INSERT INTO sources (name, company_id, api_base_url, auth_base_url, login, password_enc, poll_interval)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (name, company_id, api_base_url, auth_base_url, login, password_enc, poll_interval),
+            """INSERT INTO sources (name, company_id, api_base_url, auth_base_url, login, password_enc)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (name, company_id, api_base_url, auth_base_url, login, password_enc),
         )
         await db.commit()
         return cur.lastrowid  # type: ignore[return-value]
@@ -131,6 +130,20 @@ async def get_source(source_id: int) -> dict[str, Any] | None:
         ) as cur:
             row = await cur.fetchone()
             return dict(row) if row else None
+
+
+async def find_sources_by_credentials(
+    company_id: int, api_base_url: str, auth_base_url: str, login: str
+) -> list[dict[str, Any]]:
+    """Return sources matching company/urls/login (password comparison done in caller)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT * FROM sources
+               WHERE company_id = ? AND api_base_url = ? AND auth_base_url = ? AND login = ?""",
+            (company_id, api_base_url, auth_base_url, login),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
 
 
 async def get_all_active_sources() -> list[dict[str, Any]]:

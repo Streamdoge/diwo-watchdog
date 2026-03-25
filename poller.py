@@ -15,6 +15,7 @@ import db
 logger = logging.getLogger("poller")
 
 SECRETS_ENCRYPTION_KEY = os.getenv("SECRETS_ENCRYPTION_KEY", "").strip()
+POLL_INTERVAL = min(86400, max(60, int(os.getenv("POLL_INTERVAL", "300"))))
 DEFAULT_CONCURRENCY = max(1, int(os.getenv("COLLECTOR_CONCURRENCY", "10")))
 DEFAULT_NETWORK_RETRIES = max(0, int(os.getenv("COLLECTOR_NETWORK_RETRIES", "2")))
 
@@ -225,9 +226,8 @@ async def run_poller(on_snapshot=None) -> None:
 
             async def poll_one(source: dict[str, Any]) -> None:
                 source_id = source["id"]
-                interval = source["poll_interval"]
                 last = last_poll.get(source_id, 0)
-                if now - last < interval:
+                if now - last < POLL_INTERVAL:
                     return
 
                 async with semaphore:

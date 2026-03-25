@@ -102,7 +102,7 @@ sudo nano /etc/systemd/system/diwo-watchdog.service
 Содержимое:
 ```ini
 [Unit]
-Description=Diwo TG Watchdog
+Description=Diwo watchdog
 After=network.target
 
 [Service]

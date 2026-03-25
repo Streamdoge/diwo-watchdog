@@ -79,7 +79,6 @@ def source_detail_kb(source_id: int, is_active: bool, widgets: list) -> InlineKe
             callback_data=f"wgt_toggle:{source_id}:{w['widget_type']}",
         )])
     rows.append([InlineKeyboardButton(text="📊 Сводка сейчас", callback_data=f"src_now:{source_id}")])
-    rows.append([InlineKeyboardButton(text="✏️ Изменить интервал", callback_data=f"src_edit_interval:{source_id}")])
     rows.append([
         InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"src_delete:{source_id}"),
         InlineKeyboardButton(text="◀️ Назад", callback_data="src_back"),
@@ -143,14 +142,9 @@ class AddSource(StatesGroup):
     auth_base_url = State()
     login = State()
     password = State()
-    interval = State()
 
 
 class SetSummaryTime(StatesGroup):
-    input = State()
-
-
-class EditInterval(StatesGroup):
     input = State()
 
 
@@ -194,13 +188,12 @@ async def _sources_content(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
 async def _source_detail_content(user_id: int, source_id: int) -> tuple[str, InlineKeyboardMarkup]:
     src = await db.get_source(source_id)
     name = src["name"] if src else f"#{source_id}"
-    interval_str = _format_interval(src["poll_interval"]) if src else "?"
     sources = await db.get_user_sources(user_id)
     user_src = next((s for s in sources if s["id"] == source_id), None)
     is_active = bool(user_src and user_src["is_active"])
     all_widgets = await db.get_user_widgets(user_id)
     widgets = [w for w in all_widgets if w["source_id"] == source_id]
-    text = f"📡 {name}\n⏱ Опрос: каждые {interval_str}"
+    text = f"📡 {name}\n⏱ Опрос: каждые {_format_interval(poller.POLL_INTERVAL)}"
     return text, source_detail_kb(source_id, is_active, widgets)
 
 
@@ -225,7 +218,7 @@ async def cmd_start(msg: Message, state: FSMContext) -> None:
     await state.clear()
     await db.upsert_user(msg.from_user.id)  # type: ignore[union-attr]
     await msg.answer(
-        "Привет! Я бот мониторинга оборудования DIWO.\n"
+        "Привет! Я Diwo Watchdog — бот мониторинга оборудования DIWO.\n"
         "Добавьте источник данных и настройте виджеты.",
         reply_markup=MAIN_MENU,
     )
@@ -358,17 +351,6 @@ async def fsm_login(msg: Message, state: FSMContext) -> None:
 @router.message(AddSource.password)
 async def fsm_password(msg: Message, state: FSMContext) -> None:
     await state.update_data(password=msg.text)
-    await state.set_state(AddSource.interval)
-    await msg.answer("Введите частоту опроса в секундах (от 60 до 86400):")
-
-
-@router.message(AddSource.interval)
-async def fsm_interval(msg: Message, state: FSMContext) -> None:
-    text = (msg.text or "").strip()
-    if not text.isdigit() or not (60 <= int(text) <= 86400):
-        await msg.answer("Введите число от 60 до 86400:")
-        return
-
     data = await state.get_data()
     user_id = msg.from_user.id  # type: ignore[union-attr]
 
@@ -393,15 +375,28 @@ async def fsm_interval(msg: Message, state: FSMContext) -> None:
         f"Радаров: {total} (online: {online}, offline: {total - online})"
     )
 
-    source_id = await db.add_source(
-        name=data["name"],
+    # Дедупликация: ищем существующий источник с теми же данными
+    existing = await db.find_sources_by_credentials(
         company_id=data["company_id"],
         api_base_url=data["api_base_url"],
         auth_base_url=data["auth_base_url"],
         login=data["login"],
-        password_enc=poller.encrypt_password(data["password"]),
-        poll_interval=int(text),
     )
+    source_id = None
+    for candidate in existing:
+        if poller.decrypt_password(candidate["password_enc"]) == data["password"]:
+            source_id = candidate["id"]
+            break
+
+    if source_id is None:
+        source_id = await db.add_source(
+            name=data["name"],
+            company_id=data["company_id"],
+            api_base_url=data["api_base_url"],
+            auth_base_url=data["auth_base_url"],
+            login=data["login"],
+            password_enc=poller.encrypt_password(data["password"]),
+        )
     await state.clear()
     await db.link_user_source(user_id, source_id)
     await db.upsert_widget(user_id, source_id, wg.WIDGET_SHARP_DROP, is_enabled=True)
@@ -475,38 +470,11 @@ async def cb_src_now(cb: CallbackQuery) -> None:
         total, online = await poller.test_fetch_source(source_id)
         offline = total - online
         await cb.message.answer(  # type: ignore[union-attr]
-            f"📊 {src['name']}\nРадаров: {total} (online: {online}, offline: {offline})"
+            f"📊 Сводка сейчас\n"
+            f'Объект "{src["name"]}": Радаров всего {total}, online {online}, offline {offline}'
         )
     except Exception as exc:
         await cb.message.answer(f"⚠️ Ошибка: {_clean_error(exc)}")  # type: ignore[union-attr]
-
-
-@router.callback_query(F.data.startswith("src_edit_interval:"))
-async def cb_src_edit_interval(cb: CallbackQuery, state: FSMContext) -> None:
-    source_id = int(cb.data.split(":")[1])  # type: ignore[union-attr]
-    src = await db.get_source(source_id)
-    current = src["poll_interval"] if src else 60
-    await cb.answer()
-    await state.set_state(EditInterval.input)
-    await state.update_data(source_id=source_id)
-    await cb.message.answer(  # type: ignore[union-attr]
-        f"Введите новый интервал опроса в секундах (от 60 до 86400).\nСейчас: {current} сек"
-    )
-
-
-@router.message(EditInterval.input)
-async def fsm_edit_interval(msg: Message, state: FSMContext) -> None:
-    text = (msg.text or "").strip()
-    if not text.isdigit() or not (60 <= int(text) <= 86400):
-        await msg.answer("Введите число от 60 до 86400:")
-        return
-    data = await state.get_data()
-    source_id = data["source_id"]
-    await db.update_source_poll_interval(source_id, int(text))
-    await state.clear()
-    await msg.answer(f"✅ Интервал обновлён: {_format_interval(int(text))}")
-    text_detail, kb = await _source_detail_content(msg.from_user.id, source_id)  # type: ignore[union-attr]
-    await msg.answer(text_detail, reply_markup=kb)
 
 
 # ---------------------------------------------------------------------------
@@ -544,7 +512,7 @@ async def cb_settings_ds(cb: CallbackQuery, state: FSMContext) -> None:
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="✅ Вкл", callback_data="settings_ds_on"),
         InlineKeyboardButton(text="❌ Выкл", callback_data="settings_ds_off"),
-        InlineKeyboardButton(text="📊 Сводка сейчас", callback_data="settings_ds_now"),
+        InlineKeyboardButton(text="📊 Сейчас", callback_data="settings_ds_now"),
     ]])
     await cb.message.answer("Введите время сводки (ЧЧ:ММ)", reply_markup=kb)  # type: ignore[union-attr]
 
@@ -601,18 +569,19 @@ async def cb_settings_ds_now(cb: CallbackQuery) -> None:
     await cb.answer("🔄 Запрашиваю...")
     user_id = cb.from_user.id
     sources = await db.get_user_sources(user_id)
-    if not sources:
+    active = [s for s in sources if s["is_active"]]
+    if not active:
         await cb.message.answer("Нет активных источников.")  # type: ignore[union-attr]
         return
-    for src in sources:
+    lines = ["📊 Сводка сейчас"]
+    for src in active:
         try:
             total, online = await poller.test_fetch_source(src["id"])
             offline = total - online
-            await cb.message.answer(  # type: ignore[union-attr]
-                f"📊 {src['name']}\nРадаров: {total} (online: {online}, offline: {offline})"
-            )
+            lines.append(f'Объект "{src["name"]}": Радаров всего {total}, online {online}, offline {offline}')
         except Exception as exc:
-            await cb.message.answer(f"⚠️ {src['name']}: {_clean_error(exc)}")  # type: ignore[union-attr]
+            lines.append(f'Объект "{src["name"]}": ⚠️ {_clean_error(exc)}')
+    await cb.message.answer("\n".join(lines))  # type: ignore[union-attr]
 
 
 @router.message(SetSummaryTime.input)

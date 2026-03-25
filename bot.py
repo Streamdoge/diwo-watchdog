@@ -541,11 +541,78 @@ async def cb_settings_ds(cb: CallbackQuery, state: FSMContext) -> None:
     await cb.answer()
     await state.set_state(SetSummaryTime.input)
     await state.update_data(settings_msg_id=cb.message.message_id, settings_chat_id=cb.message.chat.id)  # type: ignore[union-attr]
-    user = await db.get_user(cb.from_user.id)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Вкл", callback_data="settings_ds_on"),
+        InlineKeyboardButton(text="❌ Выкл", callback_data="settings_ds_off"),
+        InlineKeyboardButton(text="📊 Сводка сейчас", callback_data="settings_ds_now"),
+    ]])
+    await cb.message.answer("Введите время сводки (ЧЧ:ММ)", reply_markup=kb)  # type: ignore[union-attr]
+
+
+@router.callback_query(F.data == "settings_ds_on")
+async def cb_settings_ds_on(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+    await cb.answer()
+    user_id = cb.from_user.id
+    user = await db.get_user(user_id)
     st = user["summary_time"] if user else "08:00"
-    await cb.message.answer(  # type: ignore[union-attr]
-        f"Введите время сводки (ЧЧ:ММ).\nСейчас: {st}\nИли «выкл» для отключения"
-    )
+    await db.set_user_summary_time(user_id, st)
+    await db.upsert_widget(user_id, wg.USER_LEVEL_SOURCE, wg.WIDGET_DAILY_SUMMARY, is_enabled=True)
+    data = await state.get_data()
+    await state.clear()
+    await cb.message.answer(f"✅ Сводка включена: {st}")  # type: ignore[union-attr]
+    settings_text, settings_kb = await _settings_content(user_id)
+    settings_msg_id = data.get("settings_msg_id")
+    if settings_msg_id:
+        try:
+            await bot.edit_message_text(
+                settings_text,
+                chat_id=data["settings_chat_id"],
+                message_id=settings_msg_id,
+                reply_markup=settings_kb,
+            )
+        except Exception:
+            await cb.message.answer(settings_text, reply_markup=settings_kb)  # type: ignore[union-attr]
+
+
+@router.callback_query(F.data == "settings_ds_off")
+async def cb_settings_ds_off(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+    await cb.answer()
+    user_id = cb.from_user.id
+    await db.upsert_widget(user_id, wg.USER_LEVEL_SOURCE, wg.WIDGET_DAILY_SUMMARY, is_enabled=False)
+    data = await state.get_data()
+    await state.clear()
+    await cb.message.answer("✅ Сводка отключена.")  # type: ignore[union-attr]
+    settings_text, settings_kb = await _settings_content(user_id)
+    settings_msg_id = data.get("settings_msg_id")
+    if settings_msg_id:
+        try:
+            await bot.edit_message_text(
+                settings_text,
+                chat_id=data["settings_chat_id"],
+                message_id=settings_msg_id,
+                reply_markup=settings_kb,
+            )
+        except Exception:
+            await cb.message.answer(settings_text, reply_markup=settings_kb)  # type: ignore[union-attr]
+
+
+@router.callback_query(F.data == "settings_ds_now")
+async def cb_settings_ds_now(cb: CallbackQuery) -> None:
+    await cb.answer("🔄 Запрашиваю...")
+    user_id = cb.from_user.id
+    sources = await db.get_user_sources(user_id)
+    if not sources:
+        await cb.message.answer("Нет активных источников.")  # type: ignore[union-attr]
+        return
+    for src in sources:
+        try:
+            total, online = await poller.test_fetch_source(src["id"])
+            offline = total - online
+            await cb.message.answer(  # type: ignore[union-attr]
+                f"📊 {src['name']}\nРадаров: {total} (online: {online}, offline: {offline})"
+            )
+        except Exception as exc:
+            await cb.message.answer(f"⚠️ {src['name']}: {_clean_error(exc)}")  # type: ignore[union-attr]
 
 
 @router.message(SetSummaryTime.input)

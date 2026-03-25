@@ -92,10 +92,10 @@ async def _send_daily_summary(bot: Bot, user_id: int) -> None:
         if snap:
             blocks.append(format_source_summary(s["name"], snap["total"], snap["online"]))
         else:
-            blocks.append(f'"{s["name"]}":\nнет данных')
+            blocks.append(f"<b>{s['name']}</b>\n\nнет данных")
 
     try:
-        await bot.send_message(user_id, "\n\n".join(blocks))
+        await bot.send_message(user_id, "\n\n".join(blocks), parse_mode="HTML")
     except Exception as exc:
         logger.error("Не удалось отправить сводку user=%s: %s", user_id, exc)
 

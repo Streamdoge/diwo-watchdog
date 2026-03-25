@@ -157,10 +157,10 @@ def format_source_summary(name: str, total: int, online: int) -> str:
     online_pct = round(online / total * 100) if total else 0
     offline_pct = round(offline / total * 100) if total else 0
     return (
-        f'"{name}":\n'
-        f"Всего радаров {total}:\n"
-        f"🟢 Online {online} / {online_pct}%\n"
-        f"🔴 Offline {offline} / {offline_pct}%"
+        f"<b>{name}</b>\n\n"
+        f"Offline: {offline} / {offline_pct}% 🔴\n"
+        f"Online: {online} / {online_pct}% 🟢\n"
+        f"Total: {total} 🔵"
     )
 
 
@@ -482,7 +482,8 @@ async def cb_src_now(cb: CallbackQuery) -> None:
         total, online = await poller.test_fetch_source(source_id)
         offline = total - online
         await cb.message.answer(  # type: ignore[union-attr]
-            "📊 Сводка по проектам:\n\n" + format_source_summary(src["name"], total, online)
+            "📊 Сводка по проектам:\n\n" + format_source_summary(src["name"], total, online),
+            parse_mode="HTML",
         )
     except Exception as exc:
         await cb.message.answer(f"⚠️ Ошибка: {_clean_error(exc)}")  # type: ignore[union-attr]
@@ -590,8 +591,8 @@ async def cb_settings_ds_now(cb: CallbackQuery) -> None:
             total, online = await poller.test_fetch_source(src["id"])
             blocks.append(format_source_summary(src["name"], total, online))
         except Exception as exc:
-            blocks.append(f'"{src["name"]}":\n⚠️ {_clean_error(exc)}')
-    await cb.message.answer("\n\n".join(blocks))  # type: ignore[union-attr]
+            blocks.append(f"<b>{src['name']}</b>\n⚠️ {_clean_error(exc)}")
+    await cb.message.answer("\n\n".join(blocks), parse_mode="HTML")  # type: ignore[union-attr]
 
 
 @router.message(SetSummaryTime.input)

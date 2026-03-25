@@ -12,7 +12,7 @@
 ### 1. Установить Python 3.11+
 
 ```bash
-sudo apt update && sudo apt install -y python3.11 python3.11-venv python3-pip
+sudo apt install -y python3 python3-venv python3-pip
 ```
 
 ---
@@ -56,9 +56,9 @@ git clone https://<TOKEN>@github.com/Streamdoge/diwo-watchdog.git /opt/diwo-tg-w
 
 ### 3. Установить зависимости
 
-```bash
-cd /opt/diwo-tg-watchdog
-python3.11 -m venv venv
+```bash 
+cd /opt/diwo-watchdog
+python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
@@ -88,7 +88,7 @@ nano .env
 BOT_TOKEN=токен_от_BotFather
 SECRETS_ENCRYPTION_KEY=ключ_из_шага_4
 LOG_LEVEL=INFO
-DB_PATH=/opt/diwo-tg-watchdog/watchdog.db
+DB_PATH=/opt/diwo-watchdog/watchdog.db
 ```
 
 ---
@@ -108,9 +108,9 @@ After=network.target
 [Service]
 Type=simple
 User=www-data
-WorkingDirectory=/opt/diwo-tg-watchdog
-EnvironmentFile=/opt/diwo-tg-watchdog/.env
-ExecStart=/opt/diwo-tg-watchdog/venv/bin/python main.py
+WorkingDirectory=/opt/diwo-watchdog
+EnvironmentFile=/opt/diwo-watchdog/.env
+ExecStart=/opt/diwo-watchdog/venv/bin/python main.py
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -122,7 +122,17 @@ WantedBy=multi-user.target
 
 ---
 
-### 7. Запустить сервис
+### 7. Выдать права на папку
+
+Сервис запускается от пользователя `www-data` — он должен иметь доступ к папке проекта:
+
+```bash
+chown -R www-data:www-data /opt/diwo-watchdog/
+```
+
+---
+
+### 8. Запустить сервис
 
 ```bash
 sudo systemctl daemon-reload
@@ -132,7 +142,7 @@ sudo systemctl start diwo-watchdog
 
 ---
 
-### 8. Проверить статус
+### 9. Проверить статус
 
 ```bash
 sudo systemctl status diwo-watchdog

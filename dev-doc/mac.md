@@ -10,7 +10,7 @@
 ### 1. Установить зависимости
 
 ```bash
-cd /путь/к/diwo-tg-watchdog
+cd /путь/к/diwo-watchdog
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt

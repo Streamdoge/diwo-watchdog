@@ -1,125 +1,60 @@
-# Инструкция по добавлению новых виджетов
+# Виджеты
 
-Виджет — это алгоритм, который анализирует снапшоты и отправляет уведомление пользователям при выполнении условия.
-
----
-
-## Как устроен виджет
-
-Вся логика виджетов находится в файле `widgets.py`.
-
-Каждый виджет:
-1. Имеет уникальный строковый тип (константа)
-2. Читает данные из БД (`radar_snapshots`)
-3. При выполнении условия вызывает `send_alert(user_id, text)`
-4. Управляет состоянием (сработал/не сработал) через словарь в памяти
+Виджет — включаемый/выключаемый модуль, который анализирует данные источника и уведомляет пользователя при выполнении условия. Каждый пользователь управляет виджетами независимо.
 
 ---
 
-## Шаг за шагом: добавить новый виджет
+## sharp_drop — Резкое падение
 
-### 1. Добавить константу типа в `widgets.py`
+**Константа:** `WIDGET_SHARP_DROP = "sharp_drop"`
+**Уровень:** источник (настраивается отдельно для каждого источника)
+**По умолчанию:** включён при добавлении источника
 
-```python
-WIDGET_SHARP_DROP = "sharp_drop"
-WIDGET_MY_NEW     = "my_new"   # ← добавить сюда
+### Условие срабатывания
+
+Текущее количество online-радаров меньше 50% от значения 10 минут назад.
+
+### Поведение
+
+- Алерт отправляется **один раз** при начале аномалии
+- После восстановления (online вернулся выше 50%) флаг сбрасывается — при следующем падении алерт придёт снова
+- Поддерживает **snooze**: кнопки «Отключить до завтра» и «Отключить на неделю» прямо на сообщении
+
+### Формат уведомления
+
 ```
-
-### 2. Написать функцию анализа
-
-```python
-async def _check_my_new(
-    source_id: int,
-    source_name: str,
-    total: int,
-    online: int,
-    send_alert,
-) -> None:
-    # Ваша логика здесь
-    # Пример: алерт если offline > 30%
-    if total == 0:
-        return
-    offline = total - online
-    if offline / total > 0.3:
-        subscribers = await db.get_widget_subscribers(source_id, WIDGET_MY_NEW)
-        text = f"⚠️ Много offline!\nИсточник: {source_name}\nOffline: {offline} из {total}"
-        for sub in subscribers:
-            await send_alert(sub["user_id"], text)
-```
-
-Используйте `db.get_snapshot_around(source_id, target_ts)` чтобы получить снапшот за нужный момент времени.
-
-### 3. Вызвать функцию из `analyze()`
-
-```python
-async def analyze(source_id, source_name, total, online, send_alert):
-    await _check_sharp_drop(source_id, source_name, total, online, send_alert)
-    await _check_my_new(source_id, source_name, total, online, send_alert)  # ← добавить
-```
-
-### 4. Автоматически добавлять виджет при добавлении источника (в `bot.py`)
-
-В функции `fsm_interval` найдите:
-```python
-await db.upsert_widget(user_id, source_id, wg.WIDGET_SHARP_DROP, is_enabled=True)
-```
-Добавьте рядом:
-```python
-await db.upsert_widget(user_id, source_id, wg.WIDGET_MY_NEW, is_enabled=True)
-```
-
-Виджет появится в разделе «Мои источники» рядом с источником и может быть включён/выключен там же.
-
----
-
-## Полезные функции БД
-
-```python
-# Снапшот примерно N минут назад
-prev = await db.get_snapshot_around(source_id, int(time.time()) - 600, window=120)
-if prev:
-    prev_online = prev["online"]
-
-# Последний снапшот
-snap = await db.get_latest_snapshot(source_id)
-
-# Подписчики виджета (учитывает snooze и is_active)
-subscribers = await db.get_widget_subscribers(source_id, "my_widget_type")
-# → [{"user_id": 12345, "snoozed_until": None}, ...]
+⚠️ Аномалия: Резкое падение
+Источник: НАЗВАНИЕ
+Было: X радаров online
+Стало: Y радаров online
 ```
 
 ---
 
-## Паттерн: "алерт один раз, сбрасывать при восстановлении"
+## daily_summary — Утренняя сводка
 
-```python
-_my_alert_active: dict[int, bool] = {}
+**Константа:** `WIDGET_DAILY_SUMMARY = "daily_summary"`
+**Уровень:** пользователь (одна настройка на все источники, `source_id = 0`)
+**По умолчанию:** выключена
 
-async def _check_my_new(...):
-    is_bad = ...  # ваше условие
-    currently_active = _my_alert_active.get(source_id, False)
+### Условие срабатывания
 
-    if is_bad and not currently_active:
-        _my_alert_active[source_id] = True
-        # отправить алерт
-    elif not is_bad and currently_active:
-        _my_alert_active[source_id] = False
-        # аномалия устранена
+Каждый день в указанное пользователем время (с учётом его тайм-зоны).
+
+### Настройка
+
+Раздел «⚙️ Настройки» → кнопка «📊 Сводка». Пользователь вводит время в формате `ЧЧ:ММ` или нажимает кнопки Вкл/Выкл. Там же кнопка «Сейчас» — немедленно отправляет сводку с живыми данными.
+
+### Поведение
+
+- Использует последний снапшот из БД (данные актуальны на момент последнего опроса)
+- Охватывает все активные источники пользователя
+- Повторная отправка в одну и ту же минуту исключена
+
+### Формат уведомления
+
 ```
-
----
-
-## Кнопки откладывания (snooze)
-
-Если виджет должен поддерживать кнопки «Отключить до завтра» / «Отключить на неделю» —
-просто используйте `wg.WIDGET_MY_NEW` как `widget_type` при генерации клавиатуры.
-Функция `alert_snooze_keyboard(source_id, widget_type)` из `bot.py` сгенерирует нужные кнопки.
-
-Обработчик `snooze:` в `bot.py` уже универсальный — работает с любым `widget_type`.
-
-Чтобы алерт отправлялся с кнопками, в `main.py` в функции `on_snapshot` передавайте нужный `widget_type`:
-
-```python
-async def send_alert_wrapper(user_id: int, text: str) -> None:
-    await alert_sender(user_id, text, source_id, wg.WIDGET_MY_NEW)
+📊 Утренняя сводка
+Объект "НАЗВАНИЕ": Радаров всего N, online N, offline N
+Объект "НАЗВАНИЕ2": Радаров всего N, online N, offline N
 ```

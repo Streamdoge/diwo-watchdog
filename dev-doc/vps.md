@@ -5,6 +5,8 @@
 - Ubuntu 22.04+ / Debian 12+
 - Python 3.11+
 
+---
+
 ## Установка
 
 ### 1. Установить Python 3.11+
@@ -13,16 +15,44 @@
 sudo apt update && sudo apt install -y python3.11 python3.11-venv python3-pip
 ```
 
+---
+
 ### 2. Скопировать файлы на сервер
 
+Выберите один из способов:
+
+#### Способ А — через SCP (с вашего Mac)
+
+Выполните на **вашем Mac**, не на сервере:
+
 ```bash
-scp -r diwo-tg-watchdog/ user@your-server:/opt/diwo-tg-watchdog/
+scp -r /путь/к/diwo-tg-watchdog user@IP_СЕРВЕРА:/opt/diwo-tg-watchdog
 ```
 
-Или через git:
+Например:
 ```bash
-git clone <repo> /opt/diwo-tg-watchdog
+scp -r ~/Documents/diwo-tg-watchdog user@123.45.67.89:/opt/diwo-tg-watchdog
 ```
+
+Если подключаетесь по ключу:
+```bash
+scp -i ~/.ssh/id_rsa -r ~/Documents/diwo-tg-watchdog user@123.45.67.89:/opt/diwo-tg-watchdog
+```
+
+#### Способ Б — через GitHub (на сервере)
+
+```bash
+git clone https://github.com/Streamdoge/diwo-watchdog.git /opt/diwo-tg-watchdog
+```
+
+Для приватного репозитория используйте Personal Access Token:
+```bash
+git clone https://<TOKEN>@github.com/Streamdoge/diwo-watchdog.git /opt/diwo-tg-watchdog
+```
+
+Токен создаётся на GitHub: Settings → Developer settings → Personal access tokens → scope: `repo`.
+
+---
 
 ### 3. Установить зависимости
 
@@ -33,12 +63,18 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+---
+
 ### 4. Создать Fernet-ключ (один раз)
 
 ```bash
 source venv/bin/activate
 python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
+
+Сохраните вывод — это ваш `SECRETS_ENCRYPTION_KEY`.
+
+---
 
 ### 5. Создать .env
 
@@ -54,6 +90,8 @@ SECRETS_ENCRYPTION_KEY=ключ_из_шага_4
 LOG_LEVEL=INFO
 DB_PATH=/opt/diwo-tg-watchdog/watchdog.db
 ```
+
+---
 
 ### 6. Создать systemd-сервис
 
@@ -82,6 +120,8 @@ StandardError=journal
 WantedBy=multi-user.target
 ```
 
+---
+
 ### 7. Запустить сервис
 
 ```bash
@@ -89,6 +129,8 @@ sudo systemctl daemon-reload
 sudo systemctl enable diwo-watchdog
 sudo systemctl start diwo-watchdog
 ```
+
+---
 
 ### 8. Проверить статус
 
@@ -101,9 +143,23 @@ sudo journalctl -u diwo-watchdog -f
 
 ## Обновление
 
+#### Если деплоили через SCP
+
+Скопируйте новые файлы с Mac:
+```bash
+scp -r ~/Documents/diwo-tg-watchdog user@IP_СЕРВЕРА:/opt/diwo-tg-watchdog
+```
+
+Затем на сервере:
+```bash
+sudo systemctl restart diwo-watchdog
+```
+
+#### Если деплоили через GitHub
+
 ```bash
 cd /opt/diwo-tg-watchdog
-git pull  # или скопируйте новые файлы
+git pull
 sudo systemctl restart diwo-watchdog
 ```
 

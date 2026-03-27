@@ -36,7 +36,7 @@ logger = logging.getLogger("main")
 # Scheduler: daily summary + snapshot cleanup
 # ---------------------------------------------------------------------------
 
-_summary_sent: dict[int, str] = {}  # user_id → "HH:MM" last sent
+_summary_sent: dict[int, str] = {}  # user_id → "YYYY-MM-DD HH:MM" last sent
 
 
 async def run_scheduler(bot: Bot) -> None:
@@ -61,9 +61,10 @@ async def run_scheduler(bot: Bot) -> None:
                 local_now = dt.datetime.now(tz)
                 current_hhmm = local_now.strftime("%H:%M")
                 if current_hhmm == user["summary_time"]:
+                    sent_key = f"{local_now.strftime('%Y-%m-%d')} {current_hhmm}"
                     last = _summary_sent.get(user["tg_id"])
-                    if last != current_hhmm:
-                        _summary_sent[user["tg_id"]] = current_hhmm
+                    if last != sent_key:
+                        _summary_sent[user["tg_id"]] = sent_key
                         await _send_daily_summary(bot, user["tg_id"])
 
             # Cleanup snapshots at 00:00 MSK

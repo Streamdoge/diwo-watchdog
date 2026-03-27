@@ -42,6 +42,15 @@ WIDGET_LABELS = {
     wg.WIDGET_DAILY_SUMMARY: "Сводка",
 }
 
+DAY_LABELS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+
+
+def _parse_days(days_str: str) -> set[int]:
+    try:
+        return {int(d) for d in days_str.split(",") if d.strip().isdigit()}
+    except Exception:
+        return set(range(7))
+
 # ---------------------------------------------------------------------------
 # Reply keyboard — главное меню, 3 кнопки по 1 в ряд
 # ---------------------------------------------------------------------------
@@ -106,11 +115,33 @@ def post_add_widgets_kb(new_source_id: int, states: dict) -> InlineKeyboardMarku
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def settings_inline_kb(tz_label: str, ds_enabled: bool, summary_time: str) -> InlineKeyboardMarkup:
-    ds_label = f"📊 Сводка: {summary_time}" if ds_enabled else "📊 Сводка: выкл"
+def settings_inline_kb(tz_label: str, ds_enabled: bool) -> InlineKeyboardMarkup:
+    ds_label = "📊 Сводка: вкл ✅" if ds_enabled else "📊 Сводка: выкл ❌"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"🌍 {tz_label}", callback_data="settings_tz")],
         [InlineKeyboardButton(text=ds_label, callback_data="settings_ds")],
+    ])
+
+
+def summary_settings_kb(ds_enabled: bool, summary_time: str, days_set: set[int]) -> InlineKeyboardMarkup:
+    on_mark = "✅ " if ds_enabled else ""
+    off_mark = "✅ " if not ds_enabled else ""
+    day_row = [
+        InlineKeyboardButton(
+            text=f"{'✅' if i in days_set else '☐'}{DAY_LABELS[i]}",
+            callback_data=f"ds_day:{i}",
+        )
+        for i in range(7)
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=f"{on_mark}Вкл", callback_data="ds_on"),
+            InlineKeyboardButton(text=f"{off_mark}Выкл", callback_data="ds_off"),
+        ],
+        [InlineKeyboardButton(text="📊 Сводка сейчас", callback_data="ds_now")],
+        [InlineKeyboardButton(text=f"🕐 {summary_time}", callback_data="ds_time")],
+        day_row,
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="ds_back")],
     ])
 
 
@@ -213,12 +244,24 @@ async def _settings_content(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     user = await db.get_user(user_id)
     tz_code = user["timezone"] if user else "Europe/Moscow"
     tz_label = TZ_BY_CODE.get(tz_code, tz_code)
-    st = user["summary_time"] if user else "08:00"
     ds = await db.get_user_widget(user_id, wg.USER_LEVEL_SOURCE, wg.WIDGET_DAILY_SUMMARY)
     ds_enabled = bool(ds and ds["is_enabled"])
-    ds_str = f"вкл, {st}" if ds_enabled else "выкл"
+    ds_str = "вкл" if ds_enabled else "выкл"
     text = f"⚙️ Настройки\nТайм-зона: {tz_label}\nСводка: {ds_str}"
-    return text, settings_inline_kb(tz_label, ds_enabled, st)
+    return text, settings_inline_kb(tz_label, ds_enabled)
+
+
+async def _summary_settings_content(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    user = await db.get_user(user_id)
+    ds = await db.get_user_widget(user_id, wg.USER_LEVEL_SOURCE, wg.WIDGET_DAILY_SUMMARY)
+    ds_enabled = bool(ds and ds["is_enabled"])
+    st = (user or {}).get("summary_time", "08:00")
+    days_str = (user or {}).get("summary_days", "0,1,2,3,4,5,6")
+    days_set = _parse_days(days_str)
+    days_display = ", ".join(DAY_LABELS[i] for i in sorted(days_set)) if days_set else "нет"
+    status = "вкл" if ds_enabled else "выкл"
+    text = f"📊 Настройки сводки\nСтатус: {status}\nВремя: {st}\nДни: {days_display}"
+    return text, summary_settings_kb(ds_enabled, st, days_set)
 
 
 # ---------------------------------------------------------------------------
@@ -519,65 +562,29 @@ async def cb_tz_set(cb: CallbackQuery) -> None:
 @router.callback_query(F.data == "settings_ds")
 async def cb_settings_ds(cb: CallbackQuery, state: FSMContext) -> None:
     await cb.answer()
-    await state.set_state(SetSummaryTime.input)
-    await state.update_data(settings_msg_id=cb.message.message_id, settings_chat_id=cb.message.chat.id)  # type: ignore[union-attr]
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="✅ Вкл", callback_data="settings_ds_on"),
-        InlineKeyboardButton(text="❌ Выкл", callback_data="settings_ds_off"),
-        InlineKeyboardButton(text="📊 Сейчас", callback_data="settings_ds_now"),
-    ]])
-    await cb.message.answer("Введите время сводки (ЧЧ:ММ)", reply_markup=kb)  # type: ignore[union-attr]
-
-
-@router.callback_query(F.data == "settings_ds_on")
-async def cb_settings_ds_on(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:
-    await cb.answer()
-    user_id = cb.from_user.id
-    user = await db.get_user(user_id)
-    st = user["summary_time"] if user else "08:00"
-    await db.set_user_summary_time(user_id, st)
-    await db.upsert_widget(user_id, wg.USER_LEVEL_SOURCE, wg.WIDGET_DAILY_SUMMARY, is_enabled=True)
-    data = await state.get_data()
     await state.clear()
-    await cb.message.answer(f"✅ Сводка включена: {st}")  # type: ignore[union-attr]
-    settings_text, settings_kb = await _settings_content(user_id)
-    settings_msg_id = data.get("settings_msg_id")
-    if settings_msg_id:
-        try:
-            await bot.edit_message_text(
-                settings_text,
-                chat_id=data["settings_chat_id"],
-                message_id=settings_msg_id,
-                reply_markup=settings_kb,
-            )
-        except Exception:
-            await cb.message.answer(settings_text, reply_markup=settings_kb)  # type: ignore[union-attr]
+    text, kb = await _summary_settings_content(cb.from_user.id)
+    await cb.message.edit_text(text, reply_markup=kb)  # type: ignore[union-attr]
 
 
-@router.callback_query(F.data == "settings_ds_off")
-async def cb_settings_ds_off(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:
-    await cb.answer()
-    user_id = cb.from_user.id
-    await db.upsert_widget(user_id, wg.USER_LEVEL_SOURCE, wg.WIDGET_DAILY_SUMMARY, is_enabled=False)
-    data = await state.get_data()
-    await state.clear()
-    await cb.message.answer("✅ Сводка отключена.")  # type: ignore[union-attr]
-    settings_text, settings_kb = await _settings_content(user_id)
-    settings_msg_id = data.get("settings_msg_id")
-    if settings_msg_id:
-        try:
-            await bot.edit_message_text(
-                settings_text,
-                chat_id=data["settings_chat_id"],
-                message_id=settings_msg_id,
-                reply_markup=settings_kb,
-            )
-        except Exception:
-            await cb.message.answer(settings_text, reply_markup=settings_kb)  # type: ignore[union-attr]
+@router.callback_query(F.data == "ds_on")
+async def cb_ds_on(cb: CallbackQuery) -> None:
+    await db.upsert_widget(cb.from_user.id, wg.USER_LEVEL_SOURCE, wg.WIDGET_DAILY_SUMMARY, is_enabled=True)
+    await cb.answer("Включено ✅")
+    text, kb = await _summary_settings_content(cb.from_user.id)
+    await cb.message.edit_text(text, reply_markup=kb)  # type: ignore[union-attr]
 
 
-@router.callback_query(F.data == "settings_ds_now")
-async def cb_settings_ds_now(cb: CallbackQuery) -> None:
+@router.callback_query(F.data == "ds_off")
+async def cb_ds_off(cb: CallbackQuery) -> None:
+    await db.upsert_widget(cb.from_user.id, wg.USER_LEVEL_SOURCE, wg.WIDGET_DAILY_SUMMARY, is_enabled=False)
+    await cb.answer("Выключено ❌")
+    text, kb = await _summary_settings_content(cb.from_user.id)
+    await cb.message.edit_text(text, reply_markup=kb)  # type: ignore[union-attr]
+
+
+@router.callback_query(F.data == "ds_now")
+async def cb_ds_now(cb: CallbackQuery) -> None:
     await cb.answer("🔄 Запрашиваю...")
     user_id = cb.from_user.id
     sources = await db.get_user_sources(user_id)
@@ -595,40 +602,65 @@ async def cb_settings_ds_now(cb: CallbackQuery) -> None:
     await cb.message.answer("\n\n".join(blocks), parse_mode="HTML")  # type: ignore[union-attr]
 
 
+@router.callback_query(F.data == "ds_time")
+async def cb_ds_time(cb: CallbackQuery, state: FSMContext) -> None:
+    await cb.answer()
+    await state.set_state(SetSummaryTime.input)
+    await state.update_data(ds_msg_id=cb.message.message_id, ds_chat_id=cb.message.chat.id)  # type: ignore[union-attr]
+    await cb.message.answer("Введите время сводки (ЧЧ:ММ):")  # type: ignore[union-attr]
+
+
+@router.callback_query(F.data.startswith("ds_day:"))
+async def cb_ds_day(cb: CallbackQuery) -> None:
+    day = int(cb.data.split(":")[1])  # type: ignore[union-attr]
+    user_id = cb.from_user.id
+    user = await db.get_user(user_id)
+    days_set = _parse_days((user or {}).get("summary_days", "0,1,2,3,4,5,6"))
+    if day in days_set:
+        days_set.discard(day)
+    else:
+        days_set.add(day)
+    await db.set_user_summary_days(user_id, ",".join(str(d) for d in sorted(days_set)))
+    await cb.answer()
+    text, kb = await _summary_settings_content(user_id)
+    await cb.message.edit_text(text, reply_markup=kb)  # type: ignore[union-attr]
+
+
+@router.callback_query(F.data == "ds_back")
+async def cb_ds_back(cb: CallbackQuery) -> None:
+    await cb.answer()
+    text, kb = await _settings_content(cb.from_user.id)
+    await cb.message.edit_text(text, reply_markup=kb)  # type: ignore[union-attr]
+
+
 @router.message(SetSummaryTime.input)
 async def set_summary_time_input(msg: Message, state: FSMContext, bot: Bot) -> None:
-    text = (msg.text or "").strip().lower()
+    text = (msg.text or "").strip()
     user_id = msg.from_user.id  # type: ignore[union-attr]
     data = await state.get_data()
 
-    if text == "выкл":
-        await db.upsert_widget(user_id, wg.USER_LEVEL_SOURCE, wg.WIDGET_DAILY_SUMMARY, is_enabled=False)
-        await state.clear()
-        await msg.answer("✅ Сводка отключена.")
-    else:
-        hhmm = _parse_time(text)
-        if not hhmm:
-            await msg.answer("Неверный формат. Введите ЧЧ:ММ (например: 08:00) или «выкл»:")
-            return
-        await db.set_user_summary_time(user_id, hhmm)
-        await db.upsert_widget(user_id, wg.USER_LEVEL_SOURCE, wg.WIDGET_DAILY_SUMMARY, is_enabled=True)
-        await state.clear()
-        await msg.answer(f"✅ Время сводки: {hhmm}")
+    hhmm = _parse_time(text)
+    if not hhmm:
+        await msg.answer("Неверный формат. Введите ЧЧ:ММ (например: 08:00):")
+        return
+    await db.set_user_summary_time(user_id, hhmm)
+    await state.clear()
+    await msg.answer(f"✅ Время сводки: {hhmm}")
 
-    settings_text, settings_kb = await _settings_content(user_id)
-    settings_msg_id = data.get("settings_msg_id")
-    if settings_msg_id:
+    ds_text, ds_kb = await _summary_settings_content(user_id)
+    ds_msg_id = data.get("ds_msg_id")
+    if ds_msg_id:
         try:
             await bot.edit_message_text(
-                settings_text,
-                chat_id=data["settings_chat_id"],
-                message_id=settings_msg_id,
-                reply_markup=settings_kb,
+                ds_text,
+                chat_id=data["ds_chat_id"],
+                message_id=ds_msg_id,
+                reply_markup=ds_kb,
             )
             return
         except Exception:
             pass
-    await msg.answer(settings_text, reply_markup=settings_kb)
+    await msg.answer(ds_text, reply_markup=ds_kb)
 
 
 # ---------------------------------------------------------------------------

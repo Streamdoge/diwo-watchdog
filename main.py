@@ -61,6 +61,13 @@ async def run_scheduler(bot: Bot) -> None:
                 local_now = dt.datetime.now(tz)
                 current_hhmm = local_now.strftime("%H:%M")
                 if current_hhmm == user["summary_time"]:
+                    days_str = user.get("summary_days", "0,1,2,3,4,5,6")
+                    try:
+                        allowed_days = {int(d) for d in days_str.split(",") if d.strip().isdigit()}
+                    except Exception:
+                        allowed_days = set(range(7))
+                    if local_now.weekday() not in allowed_days:
+                        continue
                     sent_key = f"{local_now.strftime('%Y-%m-%d')} {current_hhmm}"
                     last = _summary_sent.get(user["tg_id"])
                     if last != sent_key:

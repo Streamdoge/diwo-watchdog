@@ -128,7 +128,7 @@ def summary_settings_kb(ds_enabled: bool, summary_time: str, days_set: set[int])
     off_mark = "✅ " if not ds_enabled else ""
     day_row = [
         InlineKeyboardButton(
-            text=f"{'✅' if i in days_set else '☐'}{DAY_LABELS[i]}",
+            text=f"{'✅' if i in days_set else '❌'}{DAY_LABELS[i]}",
             callback_data=f"ds_day:{i}",
         )
         for i in range(7)

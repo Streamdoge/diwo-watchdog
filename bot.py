@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import logging
+import os
+from typing import Any, Awaitable, Callable
 
-from aiogram import Bot, Dispatcher, F, Router
-from aiogram.filters import CommandStart
+from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
-    Message, CallbackQuery,
+    Message, CallbackQuery, TelegramObject,
     ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove,
     InlineKeyboardMarkup, InlineKeyboardButton,
 )
@@ -18,6 +20,25 @@ import widgets as wg
 
 logger = logging.getLogger("bot")
 router = Router()
+
+ADMIN_IDS: set[int] = {
+    int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()
+}
+
+
+class BlockCheckMiddleware(BaseMiddleware):
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        user = data.get("event_from_user")
+        if user:
+            record = await db.get_user(user.id)
+            if record and record.get("is_blocked"):
+                return
+        return await handler(event, data)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -681,10 +702,45 @@ async def snooze_alert(cb: CallbackQuery) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Admin: block / unblock
+# ---------------------------------------------------------------------------
+
+@router.message(Command("block"))
+async def cmd_block(msg: Message) -> None:
+    if msg.from_user.id not in ADMIN_IDS:  # type: ignore[union-attr]
+        return
+    parts = (msg.text or "").split()
+    if len(parts) != 2 or not parts[1].lstrip("-").isdigit():
+        await msg.answer("Использование: /block <user_id>")
+        return
+    target_id = int(parts[1])
+    user = await db.get_user(target_id)
+    if not user:
+        await msg.answer(f"Пользователь {target_id} не найден в базе.")
+        return
+    await db.set_user_blocked(target_id, True)
+    await msg.answer(f"Пользователь {target_id} заблокирован.")
+
+
+@router.message(Command("unblock"))
+async def cmd_unblock(msg: Message) -> None:
+    if msg.from_user.id not in ADMIN_IDS:  # type: ignore[union-attr]
+        return
+    parts = (msg.text or "").split()
+    if len(parts) != 2 or not parts[1].lstrip("-").isdigit():
+        await msg.answer("Использование: /unblock <user_id>")
+        return
+    target_id = int(parts[1])
+    await db.set_user_blocked(target_id, False)
+    await msg.answer(f"Пользователь {target_id} разблокирован.")
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
 
 def create_dispatcher() -> Dispatcher:
     dp = Dispatcher()
+    dp.update.outer_middleware(BlockCheckMiddleware())
     dp.include_router(router)
     return dp

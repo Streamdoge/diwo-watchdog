@@ -11,7 +11,8 @@ CREATE TABLE IF NOT EXISTS users (
     tg_id        INTEGER PRIMARY KEY,
     timezone     TEXT    NOT NULL DEFAULT 'Europe/Moscow',
     summary_time TEXT    NOT NULL DEFAULT '08:00',
-    summary_days TEXT    NOT NULL DEFAULT '0,1,2,3,4,5,6'
+    summary_days TEXT    NOT NULL DEFAULT '0,1,2,3,4,5,6',
+    is_blocked   INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS sources (
@@ -58,13 +59,15 @@ async def init_db() -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.executescript(SCHEMA)
         await db.commit()
-        try:
-            await db.execute(
-                "ALTER TABLE users ADD COLUMN summary_days TEXT NOT NULL DEFAULT '0,1,2,3,4,5,6'"
-            )
-            await db.commit()
-        except Exception:
-            pass  # column already exists
+        for migration in [
+            "ALTER TABLE users ADD COLUMN summary_days TEXT NOT NULL DEFAULT '0,1,2,3,4,5,6'",
+            "ALTER TABLE users ADD COLUMN is_blocked INTEGER NOT NULL DEFAULT 0",
+        ]:
+            try:
+                await db.execute(migration)
+                await db.commit()
+            except Exception:
+                pass  # column already exists
 
 
 # --- Users ---
@@ -81,10 +84,18 @@ async def get_user(tg_id: int) -> dict[str, Any] | None:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT tg_id, timezone, summary_time, summary_days FROM users WHERE tg_id = ?", (tg_id,)
+            "SELECT tg_id, timezone, summary_time, summary_days, is_blocked FROM users WHERE tg_id = ?", (tg_id,)
         ) as cur:
             row = await cur.fetchone()
             return dict(row) if row else None
+
+
+async def set_user_blocked(tg_id: int, blocked: bool) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE users SET is_blocked = ? WHERE tg_id = ?", (1 if blocked else 0, tg_id)
+        )
+        await db.commit()
 
 
 async def set_user_timezone(tg_id: int, timezone: str) -> None:

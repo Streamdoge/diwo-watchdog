@@ -70,6 +70,19 @@ async def _check_sharp_drop(
                 logger.error("Не удалось отправить алерт user=%s: %s", sub["user_id"], exc)
 
     elif not is_anomaly and currently_active:
-        # Аномалия устранена — сбрасываем флаг
+        # Аномалия устранена — сбрасываем флаг и уведомляем
         _alert_active[source_id] = False
         logger.info("Аномалия устранена | source=%s (%s)", source_id, source_name)
+        subscribers = await db.get_widget_subscribers(source_id, WIDGET_SHARP_DROP)
+        if not subscribers:
+            return
+        text = (
+            f"✅ Восстановление работы\n"
+            f"Источник: {source_name}\n"
+            f"Сейчас: {online} из {total} радаров online"
+        )
+        for sub in subscribers:
+            try:
+                await send_alert(sub["user_id"], text)
+            except Exception as exc:
+                logger.error("Не удалось отправить уведомление о восстановлении user=%s: %s", sub["user_id"], exc)
